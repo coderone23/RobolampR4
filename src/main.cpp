@@ -64,7 +64,8 @@ LIBRARIES AND HEADER FILES
 #include <Adafruit_NeoPixel.h>  // Great Neopixel library that disables interrupts in a way that disrupts most servo libraries.
 #include <OneButton.h>          // Button handling library
 //#include <Adafruit_TiCoServo.h> // Servo library compatible with Adafruit_Neopixel.h
-#include <Servo.h>
+//#include <Servo.h>
+#include <Wire.h>
 #include <EEPROM.h>             // For saving/loading presets to/from EEPROM
 #include "Types.h"              // Custom types used in the project
 #include "Config.h"             // Configuration settings
@@ -111,8 +112,8 @@ LIBRARY ASSIGNMENTS
 
 #pragma region LIBRARY ASSIGNMENTS
 
-Servo servoYaw;                                                                // Yaw servo object
-Servo servoPitch;                                                              // Pitch servo object
+//Servo servoYaw;                                                                // Yaw servo object
+//Servo servoPitch;                                                              // Pitch servo object
 const uint8_t numPixels = 12;                                                               // Number of neopixels in lamp ring
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(numPixels, neopixelPin, NEO_GRB + NEO_KHZ800); // Neopixel object
 
@@ -258,6 +259,12 @@ bool userHasTakenControl = false;                     // Another flag for detect
 
 #pragma region Servo Control
 
+const uint8_t wire_message_angle = 0x01;        // Command byte for writing servo angle (0-180) to the I2C servo controller
+const uint8_t wire_message_microseconds = 0x02; // Command byte for writing servo pulse width in microseconds to the I2C servo controller
+const uint8_t wire_message_read = 0x03;         // Command byte for reading servo angle (0-180) from the I2C servo controller
+const uint8_t wire_servo_yaw = 0x00;          // Servo index for yaw servo on the I2C controller
+const uint8_t wire_servo_pitch = 0x01;        // Servo index for pitch servo on the I2C controller
+
 // Servo Update Rate
 const uint8_t servoUpdateInterval = 20; // Interval (ms) between servo update cycles (applies to motion smoothing)
 
@@ -392,8 +399,8 @@ bool whiteLightsAreOff = false;             // True if white lights have been fa
 unsigned long whiteFadeStartTime = 0;       // Time when white light fade started
 
 // Saved original state
-uint8_t originalMoodyYaw;     // Original yaw before moody mood
-uint8_t originalMoodyPitch;   // Original pitch before moody mood
+int16_t originalMoodyYaw;     // Original yaw before moody mood
+int16_t originalMoodyPitch;   // Original pitch before moody mood
 uint16_t originalMoodyHeight; // Original height before moody mood
 bool originalUseColoredLight; // Original light mode before moody mood
 WhiteMode originalWhiteMode;  // Original white mode before moody mood
@@ -499,6 +506,8 @@ void moveServosToTarget();                                                      
 float applyEasing(float t, InterpolationMode mode);                                                             // Applies easing function based on interpolation mode
 void cancelMoodMotion();                                                                                        // Cancels any ongoing mood-driven motion
 void completeServoMotion();                                                                                     // Completes any ongoing servo motion immediately
+void writeWireMessage(byte messageid, byte motor, int16_t value);                                               // Writes value to specified wire
+bool readWireMessage(byte messageid, byte motor, int16_t &value);                                               // Reads value from specified wire
 inline void clampHeadToDistractedBounds(int16_t &yaw, int16_t &pitch);                                          // Clamps head angles to distracted mood bounds
 inline void clampHeadToDistractedBounds() { clampHeadToDistractedBounds(originalHeadYaw, originalHeadPitch); }  // Overload for current distracted bounds
 inline void clampHeadToExcitedBounds(uint16_t &yaw, uint16_t &pitch);                                           // Clamps head angles to excited mood bounds
@@ -1231,9 +1240,10 @@ void controlServos()
     previousErrorX = 0.0f;
     previousErrorY = 0.0f;
 
-    int newYaw = servoYaw.read();
-    int newPitch = servoPitch.read();
-
+    int16_t newYaw=0, newPitch=0;
+    readWireMessage(wire_message_read, wire_servo_yaw, newYaw);
+    readWireMessage(wire_message_read, wire_servo_pitch, newPitch);
+    
     if (headMovedSignificantly(originalHeadYaw, originalHeadPitch, newYaw, newPitch))
     {
       originalHeadYaw = newYaw;
@@ -1295,8 +1305,11 @@ void handleManualControl(unsigned long now, int16_t deltaYaw, int16_t deltaPitch
   int16_t speedPitch = map(deltaPitch, -512, 512, -4, 4); // Natural pitch direction
 
   // Get current servo positions
-  int16_t currentYaw = servoYaw.read();
-  int16_t currentPitch = servoPitch.read();
+  // int16_t currentYaw = servoYaw.read();
+  // int16_t currentPitch = servoPitch.read();
+  int16_t currentYaw=0, currentPitch=0;
+  readWireMessage(wire_message_read, wire_servo_yaw, currentYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, currentPitch);
 
   // Calculate target angles from joystick input
   int16_t targetYaw = constrain(currentYaw + speedYaw, Config::servoMinYawConstraint, Config::servoMaxYawConstraint);
@@ -1324,16 +1337,20 @@ void handleManualControl(unsigned long now, int16_t deltaYaw, int16_t deltaPitch
   int16_t anglePitch = constrain(currentPitch + (int16_t)pidOutputPitch, Config::servoMinPitchConstraint, Config::servoMaxPitchConstraint);
 
   // Write servo positions
-  servoYaw.write(angleYaw);
-  servoPitch.write(anglePitch);
+  // servoYaw.write(angleYaw);
+  // servoPitch.write(anglePitch);
+  writeWireMessage(wire_message_angle, wire_servo_yaw, angleYaw);
+  writeWireMessage(wire_message_angle, wire_servo_pitch, anglePitch);
 
   // Mark that user has moved the head intentionally
   userMovedHeadDeliberately = true;
 
   if (currentMood == MOOD_MOODY)
   {
-    originalMoodyPitch = servoPitch.read();
-    originalMoodyYaw = servoYaw.read();
+    // originalMoodyPitch = servoPitch.read();
+    // originalMoodyYaw = servoYaw.read();
+    readWireMessage(wire_message_read, wire_servo_pitch, originalMoodyPitch);
+    readWireMessage(wire_message_read, wire_servo_yaw, originalMoodyYaw);
 
     if (Config::useSerial)
     {
@@ -1418,8 +1435,10 @@ void beginSnapback(unsigned long now, int16_t yaw, int16_t pitch, InterpolationM
 {
   targetServoYaw = yaw;
   targetServoPitch = pitch;
-  currentServoYaw = servoYaw.read();
-  currentServoPitch = servoPitch.read();
+  // currentServoYaw = servoYaw.read();
+  // currentServoPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
 
   startYaw = currentServoYaw;
   startPitch = currentServoPitch;
@@ -1481,13 +1500,15 @@ void moveServosToTarget()
 
   if (pulseYaw != lastServoYawWritten)
   {
-    servoYaw.writeMicroseconds(pulseYaw);
+    //servoYaw.writeMicroseconds(pulseYaw);
+    writeWireMessage(wire_message_microseconds, wire_servo_yaw, pulseYaw);
     lastServoYawWritten = pulseYaw;
   }
 
   if (pulsePitch != lastServoPitchWritten)
   {
-    servoPitch.writeMicroseconds(pulsePitch);
+    //servoPitch.writeMicroseconds(pulsePitch);
+    writeWireMessage(wire_message_microseconds, wire_servo_pitch, pulsePitch);
     lastServoPitchWritten = pulsePitch;
   }
 
@@ -1501,8 +1522,11 @@ void moveServosToTarget()
 
     interpolationStartTime = 0;
 
-    servoYaw.write((int)targetServoYaw);
-    servoPitch.write((int)targetServoPitch);
+    // servoYaw.write((int)targetServoYaw);
+    // servoPitch.write((int)targetServoPitch);
+    writeWireMessage(wire_message_angle, wire_servo_yaw, targetServoYaw);
+    writeWireMessage(wire_message_angle, wire_servo_pitch, targetServoPitch);
+
     lastServoYawWritten = (int)targetServoYaw;
     lastServoPitchWritten = (int)targetServoPitch;
 
@@ -1559,6 +1583,45 @@ void completeServoMotion()
       }
     }
   }
+}
+
+void writeWireMessage(byte messageid, byte motor, int16_t value)
+{    
+  Wire.beginTransmission(8); 
+  Wire.write(messageid);
+  Wire.write(motor);
+  if (messageid == wire_message_angle)
+  {
+    Wire.write((byte)value);
+  }
+  else if (messageid == wire_message_microseconds)
+  {
+    Wire.write((byte)(value >> 8)); // Send high byte
+    Wire.write((byte)(value & 0b11111111)); // Send low byte
+  }
+  Wire.endTransmission();
+  delayMicroseconds(100); // Allow time for the Worker to process the command
+}
+
+bool readWireMessage(byte messageid, byte motor, int16_t &value)
+{
+  Wire.beginTransmission(8); 
+  Wire.write(messageid);
+  Wire.write(motor);
+  Wire.endTransmission();
+
+  delayMicroseconds(100); // Allow time for the Worker to process the command
+
+  // Now request 1 byte back from the Worker
+  Wire.requestFrom(8, 1);
+  if (Wire.available()) {
+    byte response = Wire.read();
+    value = response; // Store the received value in the reference variable
+    Serial.print(F("Received from Worker: ")); Serial.println(value);
+    return true;
+  }
+
+  return false; // Return false if no data was available
 }
 
 void moveToHeight(uint16_t targetHeight)
@@ -1742,8 +1805,11 @@ void restoreServoPosition(float duration, InterpolationMode mode)
   targetServoYaw = originalHeadYaw;
   targetServoPitch = originalHeadPitch;
 
-  currentServoYaw = servoYaw.read();
-  currentServoPitch = servoPitch.read();
+  // currentServoYaw = servoYaw.read();
+  // currentServoPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
+
   startYaw = currentServoYaw;
   startPitch = currentServoPitch;
 
@@ -1805,8 +1871,9 @@ void initializePins()
 
 void initializeServos()
 {
-  servoYaw.attach(servoYawPWMPin);
-  servoPitch.attach(servoPitchPWMPin);
+  // servoYaw.attach(servoYawPWMPin);
+  // servoPitch.attach(servoPitchPWMPin);
+  Wire.begin();
   delay(500); // Allow time for servos to reach center
 }
 
@@ -1847,14 +1914,18 @@ void attachColorSelectionHandler()
       // Enter color selection mode
       turnOffAllLights();
 
-      originalServoYaw = servoYaw.read();
-      originalServoPitch = servoPitch.read();
+      // originalServoYaw = servoYaw.read();
+      // originalServoPitch = servoPitch.read();
+      readWireMessage(wire_message_read, wire_servo_yaw, originalServoYaw);
+      readWireMessage(wire_message_read, wire_servo_pitch, originalServoPitch);
 
       targetServoYaw = Config::menuYaw;
       targetServoPitch = Config::menuPitch;
 
-      currentServoYaw = servoYaw.read();
-      currentServoPitch = servoPitch.read();
+      // currentServoYaw = servoYaw.read();
+      // currentServoPitch = servoPitch.read();
+      readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+      readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
       startYaw = currentServoYaw;
       startPitch = currentServoPitch;
 
@@ -1915,8 +1986,10 @@ void attachColorSelectionHandler()
       targetServoYaw = originalServoYaw;
       targetServoPitch = originalServoPitch;
 
-      currentServoYaw = servoYaw.read();
-      currentServoPitch = servoPitch.read();
+      // currentServoYaw = servoYaw.read();
+      // currentServoPitch = servoPitch.read();
+      readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+      readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
       startYaw = currentServoYaw;
       startPitch = currentServoPitch;
 
@@ -2310,8 +2383,11 @@ void saveCurrentValuesToPreset(uint8_t presetIndex)
     return;
 
   // Save current state
-  presets[presetIndex].yawPosition = servoYaw.read();
-  presets[presetIndex].pitchPosition = servoPitch.read();
+  int16_t yawpos=0, pitchpos=0;
+  readWireMessage(wire_message_read, wire_servo_yaw, yawpos);
+  readWireMessage(wire_message_read, wire_servo_pitch, pitchpos);
+  presets[presetIndex].yawPosition = yawpos;
+  presets[presetIndex].pitchPosition = pitchpos;
   presets[presetIndex].height = analogRead(heightEncoderPin);
   presets[presetIndex].useColoredLight = useColoredLight;
   presets[presetIndex].brightness = getCurrentBrightness();
@@ -2388,8 +2464,10 @@ void calculatePresetInterpolation(const LampPreset &preset)
   targetServoYaw = preset.yawPosition;
   targetServoPitch = preset.pitchPosition;
 
-  currentServoYaw = servoYaw.read();
-  currentServoPitch = servoPitch.read();
+  // currentServoYaw = servoYaw.read();
+  // currentServoPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
 
   targetHeight = preset.height;
   isMoving = true;
@@ -2529,9 +2607,11 @@ void setMoodDistracted(bool confirmationBlinkActive)
     indicateActivatedMood(BLINK_COLOR, customHueRing[1]); // Orange
   }
 
-  originalHeadYaw = servoYaw.read();
-  originalHeadPitch = servoPitch.read();
-  clampHeadToDistractedBounds(originalHeadYaw, originalHeadPitch);
+  // originalHeadYaw = servoYaw.read();
+  // originalHeadPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, originalHeadYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, originalHeadPitch);
+  clampHeadToDistractedBounds(originalHeadYaw, originalHeadPitch);  
 
   isWandering = false;
   lastWanderTime = millis();
@@ -2561,8 +2641,11 @@ void updateDistractedHeadOriginIfIdle(unsigned long now)
       (now - lastJoystickMotionTime > Config::userNotControllingInterval) &&
       !readyToUpdateOriginalHead)
   {
-    originalHeadYaw = servoYaw.read();
-    originalHeadPitch = servoPitch.read();
+    // originalHeadYaw = servoYaw.read();
+    // originalHeadPitch = servoPitch.read();
+    readWireMessage(wire_message_read, wire_servo_yaw, originalHeadYaw);
+    readWireMessage(wire_message_read, wire_servo_pitch, originalHeadPitch);
+
     readyToUpdateOriginalHead = true;
     userMovedHeadDeliberately = false;
 
@@ -2591,8 +2674,10 @@ void triggerDistractedWanderIfReady(unsigned long now)
 void beginInterpolatedWander(unsigned long now, unsigned long durationMin, unsigned long durationMax,
                              unsigned long intervalMin, unsigned long intervalMax)
 {
-  currentServoYaw = servoYaw.read();
-  currentServoPitch = servoPitch.read();
+  // currentServoYaw = servoYaw.read();
+  // currentServoPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
   startYaw = currentServoYaw;
   startPitch = currentServoPitch;
 
@@ -2637,8 +2722,10 @@ void setMoodHappy(bool confirmationBlinkActive)
     drawSmileyFace();
   }
 
-  originalHeadYaw = servoYaw.read();
-  originalHeadPitch = servoPitch.read();
+  // originalHeadYaw = servoYaw.read();
+  // originalHeadPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, originalHeadYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, originalHeadPitch);
   clampHeadToExcitedBounds(originalHeadYaw, originalHeadPitch);
 
   currentExcitedIndex = random(0, 2); // Pick a random animation
@@ -2685,8 +2772,10 @@ void updateExcitedHeadOriginIfIdle(unsigned long now)
       now - lastJoystickMotionTime > Config::userNotControllingInterval &&
       !readyToUpdateOriginalHead)
   {
-    originalHeadYaw = servoYaw.read();
-    originalHeadPitch = servoPitch.read();
+    // originalHeadYaw = servoYaw.read();
+    // originalHeadPitch = servoPitch.read();
+    readWireMessage(wire_message_read, wire_servo_yaw, originalHeadYaw);
+    readWireMessage(wire_message_read, wire_servo_pitch, originalHeadPitch);
     readyToUpdateOriginalHead = true;
     clampHeadToExcitedBounds(originalHeadYaw, originalHeadPitch);
   }
@@ -2702,8 +2791,10 @@ void triggerExcitedWanderIfReady(unsigned long now)
     targetServoPitch = constrain(originalHeadPitch + random(-Config::wanderRange, Config::wanderRange + 1),
                                  Config::excitedMinPitch, Config::excitedMaxPitch);
 
-    currentServoYaw = servoYaw.read();
-    currentServoPitch = servoPitch.read();
+    // currentServoYaw = servoYaw.read();
+    // currentServoPitch = servoPitch.read();
+    readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+    readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
     startYaw = currentServoYaw;
     startPitch = currentServoPitch;
 
@@ -2780,8 +2871,10 @@ void setMoodMoody(bool confirmationBlinkActive)
   }
 
   // Capture original state
-  originalHeadYaw = servoYaw.read();
-  originalHeadPitch = servoPitch.read();
+  // originalHeadYaw = servoYaw.read();
+  // originalHeadPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, originalHeadYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, originalHeadPitch);
   originalMoodyHeight = analogRead(heightEncoderPin);
   originalUseColoredLight = useColoredLight;
   originalBrightness = getCurrentBrightness();
@@ -2990,8 +3083,10 @@ void setMoodFocused(bool confirmationBlinkActive)
   lastWanderTime = 0;
   nextWanderInterval = 0;
 
-  targetServoYaw = servoYaw.read();
-  targetServoPitch = servoPitch.read();
+  // targetServoYaw = servoYaw.read();
+  // targetServoPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, targetServoYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, targetServoPitch);
   currentServoYaw = targetServoYaw;
   currentServoPitch = targetServoPitch;
 
@@ -3099,8 +3194,10 @@ bool shouldRestoreMoodyAfterSnapback(unsigned long now)
 
 void restoreMoodyAfterSnapback(unsigned long now)
 {
-  originalHeadYaw = servoYaw.read();
-  originalHeadPitch = servoPitch.read();
+  // originalHeadYaw = servoYaw.read();
+  // originalHeadPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, originalHeadYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, originalHeadPitch);
   readyToUpdateOriginalHead = true;
   userMovedHeadDeliberately = false;
 
@@ -3114,8 +3211,10 @@ void restoreMoodyAfterSnapback(unsigned long now)
   targetServoYaw = 90;
   targetServoPitch = Config::moodyRiseTargetY;
 
-  currentServoYaw = servoYaw.read();
-  currentServoPitch = servoPitch.read();
+  // currentServoYaw = servoYaw.read();
+  // currentServoPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
   startYaw = currentServoYaw;
   startPitch = currentServoPitch;
 
@@ -3156,8 +3255,10 @@ bool shouldUpdateDistractedSnapback(unsigned long now)
 
 void updateDistractedSnapbackOrigin(unsigned long now)
 {
-  originalHeadYaw = servoYaw.read();
-  originalHeadPitch = servoPitch.read();
+  // originalHeadYaw = servoYaw.read();
+  // originalHeadPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, originalHeadYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, originalHeadPitch);
   readyToUpdateOriginalHead = true;
   userMovedHeadDeliberately = false;
 
@@ -3183,8 +3284,10 @@ void beginFocusedStartupWander(unsigned long now)
   {
     if (!readyToUpdateOriginalHead)
     {
-      originalHeadYaw = servoYaw.read();
-      originalHeadPitch = servoPitch.read();
+      // originalHeadYaw = servoYaw.read();
+      // originalHeadPitch = servoPitch.read();
+      readWireMessage(wire_message_read, wire_servo_yaw, originalHeadYaw);
+      readWireMessage(wire_message_read, wire_servo_pitch, originalHeadPitch);
       readyToUpdateOriginalHead = true;
       clampHeadToDistractedBounds(originalHeadYaw, originalHeadPitch);
     }
@@ -3199,8 +3302,10 @@ void beginFocusedStartupWander(unsigned long now)
         Config::servoMinDistractedPitchConstraint,
         Config::servoMaxDistractedPitchConstraint);
 
-    currentServoYaw = servoYaw.read();
-    currentServoPitch = servoPitch.read();
+    // currentServoYaw = servoYaw.read();
+    // currentServoPitch = servoPitch.read();
+    readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+    readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
     startYaw = currentServoYaw;
     startPitch = currentServoPitch;
 
@@ -3425,8 +3530,10 @@ void updateCurrentKeyframeAnimation()
     currentServoPitch = startPitch + (kf.pitch - startPitch) * easedT;
   }
 
-  servoYaw.write((int)currentServoYaw);
-  servoPitch.write((int)currentServoPitch);
+  // servoYaw.write((int)currentServoYaw);
+  // servoPitch.write((int)currentServoPitch);
+  writeWireMessage(wire_message_angle, wire_servo_yaw, currentServoYaw);
+  writeWireMessage(wire_message_angle, wire_servo_pitch, currentServoPitch);
 
   if (t >= 1.0)
   {
@@ -3729,8 +3836,10 @@ void finishStartupWithoutAnimation()
   }
 
   // Move head to preset[0] yaw/pitch using the normal interpolator.
-  currentServoYaw = servoYaw.read();
-  currentServoPitch = servoPitch.read();
+  // currentServoYaw = servoYaw.read();
+  // currentServoPitch = servoPitch.read();
+  readWireMessage(wire_message_read, wire_servo_yaw, currentServoYaw);
+  readWireMessage(wire_message_read, wire_servo_pitch, currentServoPitch);
 
   startYaw = currentServoYaw;
   startPitch = currentServoPitch;
