@@ -506,7 +506,7 @@ void moveServosToTarget();                                                      
 float applyEasing(float t, InterpolationMode mode);                                                             // Applies easing function based on interpolation mode
 void cancelMoodMotion();                                                                                        // Cancels any ongoing mood-driven motion
 void completeServoMotion();                                                                                     // Completes any ongoing servo motion immediately
-void writeWireMessage(byte messageid, byte motor, int16_t value);                                               // Writes value to specified wire
+void writeWireMessage(byte messageid, byte motor, uint32_t value);                                               // Writes value to specified wire
 bool readWireMessage(byte messageid, byte motor, int16_t &value);                                               // Reads value from specified wire
 inline void clampHeadToDistractedBounds(int16_t &yaw, int16_t &pitch);                                          // Clamps head angles to distracted mood bounds
 inline void clampHeadToDistractedBounds() { clampHeadToDistractedBounds(originalHeadYaw, originalHeadPitch); }  // Overload for current distracted bounds
@@ -1524,8 +1524,9 @@ void moveServosToTarget()
 
     // servoYaw.write((int)targetServoYaw);
     // servoPitch.write((int)targetServoPitch);
-    writeWireMessage(wire_message_angle, wire_servo_yaw, targetServoYaw);
-    writeWireMessage(wire_message_angle, wire_servo_pitch, targetServoPitch);
+
+    //writeWireMessage(wire_message_angle, wire_servo_yaw, targetServoYaw);
+    //writeWireMessage(wire_message_angle, wire_servo_pitch, targetServoPitch);
 
     lastServoYawWritten = (int)targetServoYaw;
     lastServoPitchWritten = (int)targetServoPitch;
@@ -1585,22 +1586,44 @@ void completeServoMotion()
   }
 }
 
-void writeWireMessage(byte messageid, byte motor, int16_t value)
+// void writeWireMessage(byte messageid, byte motor, int16_t value)
+// {    
+//   Wire.beginTransmission(8); 
+//   Wire.write(messageid);
+//   Wire.write(motor);
+//   if (messageid == wire_message_angle)
+//   {
+//     Wire.write((byte)value);
+//   }
+//   else if (messageid == wire_message_microseconds)
+//   {
+//     Wire.write((byte)(value >> 8)); // Send high byte
+//     Wire.write((byte)(value & 0b11111111)); // Send low byte
+//   }
+//   Wire.endTransmission();
+//   delayMicroseconds(100); // Allow time for the Worker to process the command
+// }
+
+// Note: 'value' must be a uint32_t to match your ESPHome requirement!
+void writeWireMessage(byte messageid, byte motor, uint32_t value)
 {    
   Wire.beginTransmission(8); 
+  
+  // Byte 0: Message ID (e.g., angle vs microsecond command type)
   Wire.write(messageid);
+  
+  // Byte 1: Motor ID
   Wire.write(motor);
-  if (messageid == wire_message_angle)
-  {
-    Wire.write((byte)value);
-  }
-  else if (messageid == wire_message_microseconds)
-  {
-    Wire.write((byte)(value >> 8)); // Send high byte
-    Wire.write((byte)(value & 0b11111111)); // Send low byte
-  }
+  
+  // Bytes 2-5: The 4-byte microsecond value (Little-Endian)
+  Wire.write((byte)(value & 0xFF));         // Lowest byte
+  Wire.write((byte)((value >> 8) & 0xFF));  // Second byte
+  Wire.write((byte)((value >> 16) & 0xFF)); // Third byte
+  Wire.write((byte)((value >> 24) & 0xFF)); // Highest byte
+
   Wire.endTransmission();
-  delayMicroseconds(100); // Allow time for the Worker to process the command
+  
+  delayMicroseconds(100); 
 }
 
 bool readWireMessage(byte messageid, byte motor, int16_t &value)
@@ -3532,8 +3555,9 @@ void updateCurrentKeyframeAnimation()
 
   // servoYaw.write((int)currentServoYaw);
   // servoPitch.write((int)currentServoPitch);
-  writeWireMessage(wire_message_angle, wire_servo_yaw, currentServoYaw);
-  writeWireMessage(wire_message_angle, wire_servo_pitch, currentServoPitch);
+  
+  //writeWireMessage(wire_message_angle, wire_servo_yaw, currentServoYaw);
+  //writeWireMessage(wire_message_angle, wire_servo_pitch, currentServoPitch);
 
   if (t >= 1.0)
   {
