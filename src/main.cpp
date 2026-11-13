@@ -64,7 +64,11 @@ LIBRARIES AND HEADER FILES
 #include <Adafruit_NeoPixel.h>  // Great Neopixel library that disables interrupts in a way that disrupts most servo libraries.
 #include <Adafruit_PWMServoDriver.h> // PWM driver library for controlling servos via I2C
 #include <OneButton.h>          // Button handling library
+#ifdef __PWM_DRIVER__
 #include <MyServo.h>
+#else
+#include <I2CServo.h>
+#endif
 #include <EEPROM.h>             // For saving/loading presets to/from EEPROM
 #include "Types.h"              // Custom types used in the project
 #include "Config.h"             // Configuration settings
@@ -111,9 +115,15 @@ LIBRARY ASSIGNMENTS
 
 #pragma region LIBRARY ASSIGNMENTS
 
+#ifdef __PWM_DRIVER__
 Adafruit_PWMServoDriver pwmDriver = Adafruit_PWMServoDriver();                         // PWM Driver object
 MyServo servoYaw(pwmDriver);                                                           // Yaw servo object
 MyServo servoPitch(pwmDriver);                                                         // Pitch servo object
+#else
+// TODO: Make the I2C address a variable.  Hardcoded to 8 for now
+I2CServo servoYaw;                                                                  // Yaw servo object
+I2CServo servoPitch;                                                                // Pitch servo object
+#endif
 const uint8_t numPixels = 12;                                                               // Number of neopixels in lamp ring
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(numPixels, neopixelPin, NEO_GRB + NEO_KHZ800); // Neopixel object
 
@@ -1807,9 +1817,15 @@ void initializePins()
 
 void initializeServos()
 {
-   // Initialize PCA9685
+#ifdef __PWM_DRIVER__  
+  // Initialize PCA9685
   pwmDriver.begin();
   pwmDriver.setPWMFreq(50); // Set to 50 Hz for Robolamp servos
+#else
+  Wire1.begin(); // Join I2C bus as Master, on the onboard 3.3V Qwiic bus
+  //Wire1.setClock(50000);
+  //Wire1.setWireTimeout(30000, true);
+#endif  
 
   servoYaw.attach(servoYawChannel);
   servoPitch.attach(servoPitchChannel);
