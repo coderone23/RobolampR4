@@ -62,9 +62,9 @@ LIBRARIES AND HEADER FILES
 #include <Arduino.h>            // Core Arduino library
 #include <avr/pgmspace.h>       // For storing data in PROGMEM to save RAM
 #include <Adafruit_NeoPixel.h>  // Great Neopixel library that disables interrupts in a way that disrupts most servo libraries.
+#include <Adafruit_PWMServoDriver.h> // PWM driver library for controlling servos via I2C
 #include <OneButton.h>          // Button handling library
-//#include <Adafruit_TiCoServo.h> // Servo library compatible with Adafruit_Neopixel.h
-#include <Servo.h>
+#include <MyServo.h>
 #include <EEPROM.h>             // For saving/loading presets to/from EEPROM
 #include "Types.h"              // Custom types used in the project
 #include "Config.h"             // Configuration settings
@@ -91,8 +91,8 @@ OneButton joyButton(A3, true);  // Joystick button handler (A3 = D17)
 const uint8_t neopixelPin = 3;        // Data pin for neopixels
 const uint8_t warmLEDpin = 5;         // PWM for [warm] LED brightness
 const uint8_t coolLEDpin = 6;         // PWM for [cool] LED brightness
-const uint8_t servoYawPWMPin = 10;    // PWM for [yaw] servo = D10
-const uint8_t servoPitchPWMPin = 9;   // PWM for [pitch] servo
+const uint8_t servoYawChannel = 0;    // PWM channel for [yaw] servo
+const uint8_t servoPitchChannel = 1;  // PWM channel for [pitch] servo
 const uint8_t motorSpeedPin = 11;     // PWM signal for motor speed
 const uint8_t motorDirectionPin = 12; // Motor direction control pin
 const uint8_t buttonUpPin = A1;       // Pin for up button
@@ -111,8 +111,9 @@ LIBRARY ASSIGNMENTS
 
 #pragma region LIBRARY ASSIGNMENTS
 
-Servo servoYaw;                                                                // Yaw servo object
-Servo servoPitch;                                                              // Pitch servo object
+Adafruit_PWMServoDriver pwmDriver = Adafruit_PWMServoDriver();                         // PWM Driver object
+MyServo servoYaw(pwmDriver);                                                           // Yaw servo object
+MyServo servoPitch(pwmDriver);                                                         // Pitch servo object
 const uint8_t numPixels = 12;                                                               // Number of neopixels in lamp ring
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(numPixels, neopixelPin, NEO_GRB + NEO_KHZ800); // Neopixel object
 
@@ -436,7 +437,7 @@ const byte EEPROM_MAGIC = 0xA5;         // Magic byte to verify EEPROM validity
 
 #pragma endregion GLOBAL VARIABLES
 
-//#define __DEBUG__
+#define __DEBUG__
 
 #ifdef __DEBUG__
 #define DEBUG_PRINT(x) do { Serial.print(x); } while(0)
@@ -1805,8 +1806,12 @@ void initializePins()
 
 void initializeServos()
 {
-  servoYaw.attach(servoYawPWMPin);
-  servoPitch.attach(servoPitchPWMPin);
+   // Initialize PCA9685
+  pwmDriver.begin();
+  pwmDriver.setPWMFreq(50); // Set to 50 Hz for Robolamp servos
+
+  servoYaw.attach(servoYawChannel);
+  servoPitch.attach(servoPitchChannel);
   delay(500); // Allow time for servos to reach center
 }
 
