@@ -1780,6 +1780,7 @@ void initializeSerial()
   if (Config::useSerial)
   {
     Serial.begin(115200);
+    Serial1.begin(115200);
     DEBUG_PRINTLN(F("HP LIGHT V2.0.0"));
   }
 }
@@ -2103,144 +2104,155 @@ void initializeEEPROM()
 
 void readSerial()
 {
-  if (Serial.available())
+  String input = "";
+  bool inputReceived = false;
+  if (Serial1.available())
   {
-    String input = Serial.readStringUntil('\n');  // Read until newline
+    input = Serial1.readStringUntil('\n');  // Read until newline
+    inputReceived = true;
+  }
+  else if (Serial.available())
+  {
+    input = Serial.readStringUntil('\n');  // Read until newline
+    inputReceived = true;
+  }
+  if (!inputReceived)
+  {
+    return; // No input received, exit the function
+  }
 
-    input.trim();
-    
-    input.toLowerCase();
+  input.trim();
+  
+  input.toLowerCase();
 
-    // DEBUG_PRINT("Read: ");
-    // DEBUG_PRINTLN(input);
-    
-    Serial.print("Read: ");
-    Serial.println(input);
+  // DEBUG_PRINT("Read: ");
+  // DEBUG_PRINTLN(input);
+  
+  Serial.print("Read: ");
+  Serial.println(input);
 
-    if (input.equals("lof"))
+  if (input.equals("lof"))
+  {
+    captureOriginalLightState();
+    turnOffAllLights();
+    lightsOff = true;
+  }
+  // else if (input.equals("lon"))
+  // {
+  //   if (originalUseColoredLight)
+  //   {
+  //     useColoredLight = true;
+  //     applyColorLighting(originalHue, originalBrightness);
+  //   }
+  //   else
+  //   {
+  //     useColoredLight = false;
+  //     setWhiteLightMode(originalWhiteMode, originalBrightness, false);
+  //   }
+  // }
+  else if (input.equals("p1"))
+  {
+    smileyDisabledAfterUserInput = true;
+    moodyWhiteLightsDisabled = false;
+    applyPreset(0);
+    syncGlobalsFromPreset(0);
+  }
+  else if (input.equals("p2"))
+  {
+    smileyDisabledAfterUserInput = true;
+    moodyWhiteLightsDisabled = false;
+    applyPreset(1);
+    syncGlobalsFromPreset(1);
+  }
+  else if (input.equals("p3"))
+  {
+    smileyDisabledAfterUserInput = true;
+    moodyWhiteLightsDisabled = false;
+    applyPreset(2);
+    syncGlobalsFromPreset(2);
+  }
+  else if (input.equals("p4"))
+  {
+    smileyDisabledAfterUserInput = true;
+    moodyWhiteLightsDisabled = false;
+    applyPreset(3);
+    syncGlobalsFromPreset(3);
+  }
+  else if (input.startsWith("bri"))
+  {
+    int InputInt = input.substring(4).toInt();
+    currentBrightness = InputInt;
+
+    if (InputInt > 0)
     {
-      captureOriginalLightState();
-      turnOffAllLights();
-      lightsOff = true;
+      lightsOff = false;
     }
-    // else if (input.equals("lon"))
-    // {
-    //   if (originalUseColoredLight)
-    //   {
-    //     useColoredLight = true;
-    //     applyColorLighting(originalHue, originalBrightness);
-    //   }
-    //   else
-    //   {
-    //     useColoredLight = false;
-    //     setWhiteLightMode(originalWhiteMode, originalBrightness, false);
-    //   }
-    // }
-    else if (input.equals("p1"))
+    if (useColoredLight)
+    {
+      applyColorLighting(hue, currentBrightness);
+    }
+    else
+    {
+      setWhiteLightMode(currentWhiteMode, currentBrightness, false);
+    }
+  }
+  else if (input.startsWith("hue"))
+  {
+    int InputInt = input.substring(4).toInt();
+
+    if (useColoredLight)
     {
       smileyDisabledAfterUserInput = true;
-      moodyWhiteLightsDisabled = false;
-      applyPreset(0);
-      syncGlobalsFromPreset(0);
-    }
-    else if (input.equals("p2"))
-    {
-      smileyDisabledAfterUserInput = true;
-      moodyWhiteLightsDisabled = false;
-      applyPreset(1);
-      syncGlobalsFromPreset(1);
-    }
-    else if (input.equals("p3"))
-    {
-      smileyDisabledAfterUserInput = true;
-      moodyWhiteLightsDisabled = false;
-      applyPreset(2);
-      syncGlobalsFromPreset(2);
-    }
-    else if (input.equals("p4"))
-    {
-      smileyDisabledAfterUserInput = true;
-      moodyWhiteLightsDisabled = false;
-      applyPreset(3);
-      syncGlobalsFromPreset(3);
-    }
-    else if (input.startsWith("bri"))
-    {
-      int InputInt = input.substring(4).toInt();
-      currentBrightness = InputInt;
+      isSmileyModeActive();
+      useColoredLight = true;
+      uint16_t fromHue = hue;
+      hue = InputInt;
+      uint16_t toHue   = hue;
+      uint8_t fromBri  = getCurrentBrightness();
+      uint8_t toBri    = fromBri;
 
-      if (InputInt > 0)
+      if (currentBrightness > 0)
       {
-        lightsOff = false;
-      }
-// BOOKMARK
-      if (useColoredLight)
-      {
-        applyColorLighting(hue, currentBrightness);
+      startNeopixelInterpolation(fromHue, fromBri, toHue, toBri, 750);
+      applyColorLighting(InputInt, currentBrightness);
+      setNeopixelColor(InputInt, currentBrightness);
       }
       else
       {
-        setWhiteLightMode(currentWhiteMode, currentBrightness, false);
-      }
-    }
-    else if (input.startsWith("hue"))
-    {
-      int InputInt = input.substring(4).toInt();
-
-      if (useColoredLight)
-      {
-        smileyDisabledAfterUserInput = true;
-        isSmileyModeActive();
-        useColoredLight = true;
-        uint16_t fromHue = hue;
-        hue = InputInt;
-        uint16_t toHue   = hue;
-        uint8_t fromBri  = getCurrentBrightness();
-        uint8_t toBri    = fromBri;
-
-        if (currentBrightness > 0)
-        {
-        startNeopixelInterpolation(fromHue, fromBri, toHue, toBri, 750);
-        applyColorLighting(InputInt, currentBrightness);
-        setNeopixelColor(InputInt, currentBrightness);
-        }
-        else
-        {
-          applyColorLighting(InputInt, currentBrightness);
-          setNeopixelColor(InputInt, currentBrightness);
-        }
-      }
-      else
-      {
-        analogWrite(coolLEDpin, 0);
-        analogWrite(warmLEDpin, 0);
-        useColoredLight = true;
-        hue = InputInt;
         applyColorLighting(InputInt, currentBrightness);
         setNeopixelColor(InputInt, currentBrightness);
       }
     }
-    else if (input.startsWith("ton"))
+    else
     {
-      input = input.substring(6);
+      analogWrite(coolLEDpin, 0);
+      analogWrite(warmLEDpin, 0);
+      useColoredLight = true;
+      hue = InputInt;
+      applyColorLighting(InputInt, currentBrightness);
+      setNeopixelColor(InputInt, currentBrightness);
+    }
+  }
+  else if (input.startsWith("ton"))
+  {
+    input = input.substring(6);
 
-      pixels.clear();
-      pixels.show();
+    pixels.clear();
+    pixels.show();
 
-      useColoredLight = false;
+    useColoredLight = false;
 
-      if (input == "warm")
-      {
-        setWhiteLightMode(WHITE_WARM, currentBrightness, true);
-      }
-      else if (input == "cool")
-      {
-        setWhiteLightMode(WHITE_COOL, currentBrightness, true);
-      }
-      else if (input == "both")
-      {
-        setWhiteLightMode(WHITE_SOFT, currentBrightness, true);
-      }
+    if (input == "warm")
+    {
+      setWhiteLightMode(WHITE_WARM, currentBrightness, true);
+    }
+    else if (input == "cool")
+    {
+      setWhiteLightMode(WHITE_COOL, currentBrightness, true);
+    }
+    else if (input == "both")
+    {
+      setWhiteLightMode(WHITE_SOFT, currentBrightness, true);
     }
   }
 }
