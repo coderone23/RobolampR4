@@ -49,8 +49,8 @@ namespace Config
     // Range Limits
     const uint8_t servoMinYawConstraint = 5;     // Limits the servo to a maximum range just shy of its hard-limit of 0
     const uint8_t servoMaxYawConstraint = 175;   // Limits the servo to a maximum range just shy of its hard-limit of 180
-    const uint8_t servoMinPitchConstraint = 10;  // Limits the servo to a maximum range just shy of its hard-limit of 0
-    const uint8_t servoMaxPitchConstraint = 170; // Limits the servo to a maximum range just shy of its hard-limit of 180
+    const uint8_t servoMinPitchConstraint = 20;  // Limits the servo to a maximum range just shy of its hard-limit of 0
+    const uint8_t servoMaxPitchConstraint = 160; // Limits the servo to a maximum range just shy of its hard-limit of 180
 
     // Mood Timing
     constexpr unsigned long moodIdleDelay = 8000;             // Time of inactivity before entering mood behavior
