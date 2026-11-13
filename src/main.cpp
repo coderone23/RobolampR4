@@ -146,7 +146,7 @@ bool useColoredLight = true;                      // Tracks whether or not color
 uint16_t hue = 0;                                 // Stores current hue value for LEDs
 uint8_t logicalSelectedIndex = 0;                 // Global variable to keep track of the logical color selection
 uint8_t currentBrightness = 128;                  // Initialize to mid-bright-brightness (brightness affects the human eye on a non-linear scale)
-uint8_t brightnessLevelCount = 5;                 // Number of brightness levels available
+uint8_t brightnessLevelCount = 6;                 // Number of brightness levels available
 unsigned long lastNeopixelUpdate = 0;             // Store the last time Neopixels were updated
 const unsigned long neopixelUpdateInterval = 100; // LED update interval in milliseconds
 uint32_t neopixelBuffer[numPixels];               // Buffer for storing Neopixel colors
@@ -159,6 +159,7 @@ bool fadingStarted = false;                       // Tracks whether a white ligh
 // Calculate brightness levels using (approximately) exponential scaling
 // Using 5 levels from 28-255, but distributed (more-or-less) exponentially
 const uint8_t brightnessLevels[] PROGMEM = {
+    0,   // Off
     30,  // Very dim (Under this value we start to lose color data)
     40,  // Dim (40, a little higher than 32 = sqrt(255 * 0.04))
     64,  // Medium (64 = sqrt(255 * 0.16))    ~16% perceived
@@ -348,6 +349,12 @@ const unsigned long frameInterval = 5;      // Interval (ms) between frame-based
 unsigned long interpolationStartTime = 0;   // Timestamp when the current interpolation began
 unsigned long interpolationDuration = 1500; // Duration (ms) of the current interpolation
 
+const uint8_t CH_LIGHT_POWER = 0x10;
+const uint8_t CH_LIGHT_HUE = 0x11;
+const uint8_t CH_LIGHT_BRIGHTNESS = 0x12;
+const uint8_t CH_LIGHT_TONE = 0x13;
+const uint8_t CH_LIGHT_MODE = 0x14;
+
 #pragma endregion Interpolation Controls
 
 #pragma region Mood Management
@@ -478,7 +485,9 @@ void attachMoodSelectionShortcuts();    // Attaches double-click handlers for mo
 void attachCustomShortcuts();           // Attaches multi-click handlers for custom behavior
 void attachMotorButtons();              // Attaches up/down button handlers
 void initializeEEPROM();                // Prepares EEPROM and loads presets if valid
+void sendLightStatus(uint8_t channel, uint32_t value); // Sends a status byte to the slave device over I2C
 void readSerial();                      // Reads commands from the Serial interface
+void notifyLightStatus();               // Notifies the status of the lights
 void calibrateJoystick();               // Calibrates joystick center positions
 void initializeInterpolationDefaults(); // Sets default interpolation parameters
 void seedRandomIfNeeded();              // Seeds random number generator if needed
@@ -689,7 +698,13 @@ void loop()
   updateFrameBasedMovement(now); // Update frame-based movement for animations
   updateKeyframePlayback();      // Update keyframe playback if active
   readSerial();                  // Reads the Serial Input
+  static unsigned long lastStatusPush = 0;
+  if (millis() - lastStatusPush > 250) {
+    lastStatusPush = millis();
+    notifyLightStatus();
+  }
 }
+
 
 #pragma endregion LOOP
 
@@ -2117,6 +2132,23 @@ void initializeEEPROM()
     savePresetsToEEPROM(); // write defaults once if user has never set any of their own presets
   }
 }
+void sendLightStatus(uint8_t channel, uint32_t value) {
+  Wire1.beginTransmission(8);
+  Wire1.write(channel);
+  Wire1.write((uint8_t)((value >> 24) & 0xFF));
+  Wire1.write((uint8_t)((value >> 16) & 0xFF));
+  Wire1.write((uint8_t)((value >> 8) & 0xFF));
+  Wire1.write((uint8_t)(value & 0xFF));
+  Wire1.endTransmission();
+}
+
+void notifyLightStatus() {
+  sendLightStatus(CH_LIGHT_POWER, (uint32_t)(!lightsOff));
+  sendLightStatus(CH_LIGHT_MODE, (uint32_t)useColoredLight); 
+  sendLightStatus(CH_LIGHT_HUE, (uint32_t)hue);
+  sendLightStatus(CH_LIGHT_BRIGHTNESS, (uint32_t)currentBrightness);
+  sendLightStatus(CH_LIGHT_TONE, (uint32_t)currentWhiteMode);
+}
 
 void readSerial()
 {
@@ -2193,6 +2225,10 @@ void readSerial()
     moodyWhiteLightsDisabled = false;
     applyPreset(3);
     syncGlobalsFromPreset(3);
+  }
+  else if (input.startsWith("setp")) {
+    int InputInt = input.substring(4).toInt();
+    saveCurrentValuesToPreset(InputInt-1);
   }
   else if (input.startsWith("bri"))
   {

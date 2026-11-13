@@ -1,0 +1,376 @@
+# Board: Seeed XIAO ESP32S3 (Seeed Studio)
+# Definition: definitions/boards/seeed-xiao-esp32s3/manifest.yaml
+
+esphome:
+  name: robolamp
+  friendly_name: Robolamp
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: arduino
+
+logger:
+
+api:
+  encryption:
+    key: xxxx
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: xxxx
+  ap:
+    ssid: Robolamp Fallback Hotspot
+    password: xxxx
+
+captive_portal:
+
+uart:
+  - baud_rate: 115200
+    rx_pin: GPIO44
+    tx_pin: GPIO9
+    id: uart_1
+
+serial_proxy:
+  - name: Arduino
+    uart_id: uart_1
+    port_type: TTL
+    id: serial_proxy_1
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+xiao_servo_bridge:
+  id: servo_bridge
+
+globals:
+  - id: red_val
+    type: float
+    initial_value: '0'
+  - id: green_val
+    type: float
+    initial_value: '0'
+  - id: blue_val
+    type: float
+    initial_value: '0'
+  - id: cw_val
+    type: float
+    initial_value: '0'
+  - id: ww_val
+    type: float
+    initial_value: '0'
+  - id: syncing_from_hardware
+    type: bool
+    initial_value: 'false'
+  - id: last_outgoing_send_ms
+    type: uint32_t
+    initial_value: '0'
+
+interval:
+  # OUTGOING: HA/HomeKit -> Nano.
+  # Reads the TARGET state (remote_values), never the mid-transition output values,
+  # so a fade never gets forwarded as a false brightness dip or shutoff.
+  - interval: 40ms
+    then:
+      - lambda: |-
+          if (id(syncing_from_hardware)) return;
+
+          static int last_sent_hue = -1;
+          static int last_sent_bri = -1;
+          static std::string last_sent_tone = "";
+          static bool is_on = false;
+          static bool is_color_mode = true;
+
+          static float saved_ha_brightness = 1.0;
+          static float last_target_h = -1.0;
+          static float last_target_ct = -1.0;
+
+          auto values = id(robo_lamp)->remote_values;
+          bool target_is_on = values.is_on();
+          float target_bri = values.get_brightness();
+
+          if (target_is_on && target_bri > 0.01) {
+            saved_ha_brightness = target_bri;
+          }
+
+          float tr = values.get_red();
+          float tg = values.get_green();
+          float tb = values.get_blue();
+          float tv = std::max(tr, std::max(tg, tb));
+          float t_min = std::min(tr, std::min(tg, tb));
+          float t_delta = tv - t_min;
+
+          float t_h = last_target_h;
+          if (tv > 0.001 && t_delta > 0.001) {
+            if (tv == tr) t_h = 60.0 * (tg - tb) / t_delta;
+            else if (tv == tg) t_h = 60.0 * (2.0 + (tb - tr) / t_delta);
+            else t_h = 60.0 * (4.0 + (tr - tg) / t_delta);
+            while (t_h < 0.0) t_h += 360.0;
+            while (t_h >= 360.0) t_h -= 360.0;
+          }
+
+          float t_ct = values.get_color_temperature();
+
+          if (t_h != last_target_h && last_target_h != -1.0) is_color_mode = true;
+          if (t_ct != last_target_ct && last_target_ct != -1.0) is_color_mode = false;
+
+          // Auto turn-on if the user adjusts color/tone while the light is off
+          if (!target_is_on) {
+            bool color_changed = (last_target_h != -1.0 && std::abs(t_h - last_target_h) > 1.0);
+            bool tone_changed = (last_target_ct != -1.0 && std::abs(t_ct - last_target_ct) > 1.0);
+
+            if (color_changed || tone_changed) {
+              auto call = id(robo_lamp)->turn_on();
+              call.set_brightness(saved_ha_brightness);
+              call.perform();
+
+              if (color_changed) is_color_mode = true;
+              if (tone_changed) is_color_mode = false;
+
+              last_target_h = t_h;
+              last_target_ct = t_ct;
+              return;
+            }
+          }
+
+          last_target_h = t_h;
+          last_target_ct = t_ct;
+
+          // On/off strictly follows the real commanded state.
+          if (target_is_on) {
+
+            if (!is_on) {
+              id(uart_1).write_str("lon\n");
+              id(last_outgoing_send_ms) = millis();
+              is_on = true;
+            }
+
+            if (is_color_mode) {
+              if (tv > 0.001 && t_delta > 0.001) {
+                int final_hue = last_sent_hue;
+                if (t_h < 12 || t_h >= 348) { final_hue = 10; }
+                else if (t_h >= 12 && t_h < 38) { final_hue = 3800; }
+                else if (t_h >= 38 && t_h < 75) { final_hue = 8000; }
+                else if (t_h >= 75 && t_h < 105) { final_hue = 15500; }
+                else if (t_h >= 105 && t_h < 165) { final_hue = 22000; }
+                else if (t_h >= 165 && t_h < 205) { final_hue = 31000; }
+                else if (t_h >= 205 && t_h < 265) { final_hue = 42000; }
+                else if (t_h >= 265 && t_h < 290) { final_hue = 48000; }
+                else if (t_h >= 290 && t_h < 348) { final_hue = 62000; }
+
+                if (final_hue != last_sent_hue && final_hue != -1) {
+                  last_sent_hue = final_hue;
+                  std::string hue_cmd = "hue:" + std::to_string(final_hue) + "\n";
+                  id(uart_1).write_str(hue_cmd.c_str());
+                  id(last_outgoing_send_ms) = millis();
+                }
+              }
+              last_sent_tone = "";
+
+            } else {
+              std::string current_tone = "both";
+              if (t_ct <= 260) { current_tone = "cool"; }
+              else if (t_ct >= 390) { current_tone = "warm"; }
+
+              if (current_tone != last_sent_tone) {
+                last_sent_tone = current_tone;
+                std::string tone_cmd = "tones:" + current_tone + "\n";
+                id(uart_1).write_str(tone_cmd.c_str());
+                id(last_outgoing_send_ms) = millis();
+              }
+              last_sent_hue = -1;
+            }
+
+            int val = (int)(target_bri * 255.0);
+            if (val != last_sent_bri) {
+              last_sent_bri = val;
+              std::string bri_cmd = "bri:" + std::to_string(val) + "\n";
+              id(uart_1).write_str(bri_cmd.c_str());
+              id(last_outgoing_send_ms) = millis();
+            }
+
+          } else {
+            if (is_on) {
+              id(uart_1).write_str("lof\n");
+              id(last_outgoing_send_ms) = millis();
+              is_on = false;
+              last_sent_bri = 0;
+            }
+          }
+
+  # INCOMING: Nano -> HA/HomeKit status reflection.
+  # Ignored for 5s after we send anything outgoing, so a stale echo can't undo a fresh change.
+  - interval: 500ms
+    then:
+      - lambda: |-
+          if (millis() - id(last_outgoing_send_ms) < 5000) return;
+
+          static bool last_power = false;
+          static uint8_t last_bri = 255;
+          static uint16_t last_hue_bucket = 0;
+          static uint8_t last_tone = 0;
+          static bool last_mode = true;
+
+          bool hw_power = id(servo_bridge)->get_light_power();
+          bool hw_mode = id(servo_bridge)->get_light_color_mode();
+          uint8_t hw_bri = id(servo_bridge)->get_light_brightness();
+          uint16_t hw_hue = id(servo_bridge)->get_light_hue();
+          uint8_t hw_tone = id(servo_bridge)->get_light_tone();
+
+          bool changed = (hw_power != last_power) || (hw_bri != last_bri) ||
+                         (hw_hue != last_hue_bucket) || (hw_tone != last_tone) ||
+                         (hw_mode != last_mode);
+          if (!changed) return;
+
+          last_power = hw_power;
+          last_mode = hw_mode;
+          last_bri = hw_bri;
+          last_hue_bucket = hw_hue;
+          last_tone = hw_tone;
+
+          id(syncing_from_hardware) = true;
+
+          if (!hw_power) {
+            auto off_call = id(robo_lamp)->turn_off();
+            off_call.perform();
+            id(syncing_from_hardware) = false;
+            return;
+          }
+
+          auto call = id(robo_lamp)->turn_on();
+          call.set_brightness(hw_bri / 255.0f);
+
+          if (hw_mode) {
+            float deg = 0;
+            switch (hw_hue) {
+              case 10: deg = 0; break;
+              case 3800: deg = 25; break;
+              case 8000: deg = 56; break;
+              case 15500: deg = 90; break;
+              case 22000: deg = 135; break;
+              case 31000: deg = 185; break;
+              case 42000: deg = 235; break;
+              case 48000: deg = 277; break;
+              case 62000: deg = 319; break;
+              default: deg = 0; break;
+            }
+            float c = 1.0f;
+            float x = 1.0f - fabs(fmod(deg / 60.0f, 2.0f) - 1.0f);
+            float r = 0, g = 0, b = 0;
+            if (deg < 60) { r = c; g = x; b = 0; }
+            else if (deg < 120) { r = x; g = c; b = 0; }
+            else if (deg < 180) { r = 0; g = c; b = x; }
+            else if (deg < 240) { r = 0; g = x; b = c; }
+            else if (deg < 300) { r = x; g = 0; b = c; }
+            else { r = c; g = 0; b = x; }
+            call.set_rgb(r, g, b);
+          } else {
+            float ct = 326.0f;
+            if (hw_tone == 1) ct = 500.0f;
+            else if (hw_tone == 3) ct = 153.0f;
+            call.set_color_temperature(ct);
+          }
+
+          call.perform();
+          id(syncing_from_hardware) = false;
+
+light:
+  - platform: rgbww
+    id: robo_lamp
+    name: "Robolamp"
+    red: red_out
+    green: green_out
+    blue: blue_out
+    cold_white: cw_out
+    warm_white: ww_out
+    cold_white_color_temperature: 153 mireds
+    warm_white_color_temperature: 500 mireds
+    color_interlock: true
+    gamma_correct: 1.0
+    default_transition_length: 1s
+    # NOTE: on_turn_on and on_turn_off are DELETED!
+
+output:
+  - platform: template
+    id: red_out
+    type: float
+    write_action:
+      - lambda: 'id(red_val) = state;'
+  - platform: template
+    id: green_out
+    type: float
+    write_action:
+      - lambda: 'id(green_val) = state;'
+  - platform: template
+    id: blue_out
+    type: float
+    write_action:
+      - lambda: 'id(blue_val) = state;'
+  - platform: template
+    id: cw_out
+    type: float
+    write_action:
+      - lambda: 'id(cw_val) = state;'
+  - platform: template
+    id: ww_out
+    type: float
+    write_action:
+      - lambda: 'id(ww_val) = state;'
+
+select:
+  - platform: template
+    name: "Lamp Preset"
+    id: lamp_preset_select
+    optimistic: true
+    options:
+      - "1"
+      - "2"
+      - "3"
+      - "4"
+    initial_option: "1"
+
+button:
+  - platform: template
+    name: "Send Preset"
+    id: send_preset_button
+    on_press:
+      - lambda: |-
+          std::string current_val = id(lamp_preset_select).current_option();
+          if (current_val == "1") {
+            id(uart_1).write_str("p1\n");
+          } else if (current_val == "2") {
+            id(uart_1).write_str("p2\n");
+          } else if (current_val == "3") {
+            id(uart_1).write_str("p3\n");
+          } else if (current_val == "4") {
+            id(uart_1).write_str("p4\n");
+          }
+  - platform: uart
+    name: Preset 1
+    uart_id: uart_1
+    data: "p1\n"
+    id: button_uart_1
+
+  - platform: uart
+    name: Preset 2
+    uart_id: uart_1
+    data: "p2\n"
+    id: button_uart_2
+
+  - platform: uart
+    name: Preset 3
+    uart_id: uart_1
+    data: "p3\n"
+    id: button_uart_3
+
+  - platform: uart
+    name: Preset 4
+    uart_id: uart_1
+    data: "p4\n"
+    id: button_uart_4
